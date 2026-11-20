@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   package:
     name: ${{ matrix.name }}
@@ -22,16 +26,20 @@ jobs:
             script: package:win
             artifacts: |
               dist/*.exe
+          # Apple Silicon. Standard hosted image; do not use a "-us-xl" label.
           - name: macOS arm64
             os: macos-14
             script: package:mac:arm64
             artifacts: |
               dist/*.dmg
+              dist/*.zip
+          # Intel. If this label is unavailable on the account, use macos-13.
           - name: macOS x64
-            os: macos-13
+            os: macos-15-intel
             script: package:mac:x64
             artifacts: |
               dist/*.dmg
+              dist/*.zip
           - name: Linux x64
             os: ubuntu-latest
             script: package:linux:x64
@@ -45,6 +53,12 @@ jobs:
         with:
           node-version: 24
           cache: npm
+
+      - name: Install Linux packaging tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fakeroot
 
       - name: Install dependencies
         run: npm ci
