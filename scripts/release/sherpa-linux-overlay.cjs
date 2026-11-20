@@ -14,7 +14,14 @@ function verifySherpaOverlay(projectDir) {
   if (installed.version !== metadata.version) throw new Error('Sherpa overlay does not match installed platform package')
 }
 
-function withSherpaOverlay(base) {
+function withSherpaOverlay(base, projectDir = process.cwd()) {
+  // The overlay is a reviewed, locally rebuilt addon. When it has not been
+  // prepared (a fresh checkout or CI without the rebuild step), fall back to
+  // the platform package npm installed instead of failing the whole package.
+  if (!fs.existsSync(path.join(projectDir, '.build/sherpa-linux/rebuild.json'))) {
+    console.warn('sherpa: .build/sherpa-linux is missing; packaging the stock sherpa-onnx-linux-x64 addon')
+    return base
+  }
   return { ...base,
     files: [...base.files, '!node_modules/sherpa-onnx-linux-x64/sherpa-onnx.node',
       { from: '.build/sherpa-linux', to: 'node_modules/sherpa-onnx-linux-x64', filter: ['sherpa-onnx.node'] }],
