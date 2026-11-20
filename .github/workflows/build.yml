@@ -28,7 +28,7 @@ jobs:
               dist/*.exe
           # Apple Silicon. Standard hosted image; do not use a "-us-xl" label.
           - name: macOS arm64
-            os: macos-14
+            os: macos-15
             script: package:mac:arm64
             artifacts: |
               dist/*.dmg
