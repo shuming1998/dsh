@@ -1,0 +1,775 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src 'self' file:; style-src 'unsafe-inline'; script-src 'unsafe-inline'"
+    />
+    <title>DSH Desktop</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        /* Reading column for the recovery content: fixed, not a share of the
+           window, so lines stay a readable length on wide displays and the
+           column simply collapses to the window on narrow ones. Header and
+           footer keep their full-width rules but align to the same column. */
+        --page-max: 800px;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        --canvas: #f7f7f8;
+        --surface: #ffffff;
+        --surface-soft: #f5f6f7;
+        --ink: #18181b;
+        --muted: #71717a;
+        --faint: #a1a1aa;
+        --line: #e4e4e7;
+        --line-strong: #d4d4d8;
+        --button: #18181b;
+        --button-hover: #303034;
+        --primary-ink: #ffffff;
+        --danger: #c33b38;
+        --shadow: 0 12px 34px rgba(24, 24, 27, 0.1);
+      }
+
+      * { box-sizing: border-box; }
+      html, body { width: 100%; min-width: 320px; min-height: 100%; margin: 0; }
+      /* The page fills the window; the 46px strip keeps the header clear of the
+         hidden title bar's window controls. Header and footer stay put and only
+         the content between them scrolls. */
+      body {
+        height: 100vh;
+        display: block;
+        overflow: hidden;
+        padding: 46px 0 0;
+        color: var(--ink);
+        background: var(--surface);
+      }
+
+      button { font: inherit; }
+      .shell {
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        height: calc(100vh - 46px);
+        background: var(--surface);
+      }
+      .header {
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 8px max(32px, calc((100% - var(--page-max)) / 2));
+        transition: padding-left 200ms ease, padding-right 200ms ease;
+      }
+      .brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
+      .brand img { width: 28px; height: 28px; border-radius: 8px; }
+      .brand-name { font-size: 14px; font-weight: 650; letter-spacing: -0.01em; }
+      .content { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: auto; padding: 30px 32px 22px; }
+      .column { display: flex; flex-direction: column; width: min(100%, var(--page-max)); margin-inline: auto; }
+      .column > * { flex-shrink: 0; }
+      .notice {
+        display: none;
+        margin: 0 0 18px;
+        padding: 11px 13px;
+        border-radius: 10px;
+        color: var(--danger);
+        background: rgba(195, 59, 56, 0.08);
+        font-size: 12px;
+        line-height: 1.55;
+      }
+      .notice.visible { display: block; }
+      /* Recovery progress sits under the heading as a caption and a thin bar:
+         handled plugins over handled plus still-failing ones. */
+      .progress {
+        display: none;
+        flex-direction: column;
+        gap: 8px;
+        margin: 12px 0 0;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      .progress.visible { display: flex; }
+      .progress-track {
+        display: block;
+        height: 4px;
+        border-radius: 999px;
+        background: var(--line);
+        overflow: hidden;
+      }
+      .progress-fill {
+        display: block;
+        height: 100%;
+        width: 0;
+        border-radius: inherit;
+        background: var(--ink);
+        transition: width 240ms ease;
+      }
+      h1 {
+        margin: 0;
+        max-width: 590px;
+        font-size: 21px;
+        font-weight: 650;
+        line-height: 1.35;
+        letter-spacing: -0.025em;
+      }
+      .summary {
+        margin: 8px 0 20px;
+        max-width: 610px;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.6;
+      }
+      .summary:empty { display: none; }
+      .summary:empty + .conflict-card { margin-top: 30px; }
+
+      .conflict-card {
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--surface-soft);
+      }
+      .reason {
+        padding: 17px 19px 16px;
+      }
+      .reason-label {
+        margin: 0 0 7px;
+        color: var(--ink);
+        font-size: 13px;
+        font-weight: 680;
+      }
+      .reason-detail {
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.55;
+      }
+      .plugins {
+        display: none;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      .plugins.visible { display: block; }
+      .plugins li {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 11px;
+        min-height: 44px;
+        padding: 10px 19px;
+        border-top: 1px solid var(--line);
+      }
+      .plugins li:first-child { border-top: 0; }
+      .plugin-mark {
+        width: 22px;
+        height: 22px;
+        display: grid;
+        place-items: center;
+        flex: 0 0 auto;
+        border: 1px solid var(--line-strong);
+        border-radius: 6px;
+        color: var(--muted);
+        background: var(--surface);
+        font-size: 12px;
+        font-weight: 750;
+      }
+      .plugin-check-actions { width: 100%; display: flex; justify-content: flex-end; gap: 8px; }
+      .plugin-check-actions .plugin-upgrade-btn { margin-left: 0; }
+      .plugin-check-hint { width: 100%; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+      .plugin-name {
+        min-width: 0;
+        overflow-wrap: anywhere;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 13px;
+        font-weight: 600;
+      }
+
+      .safety {
+        display: flex;
+        align-items: flex-start;
+        gap: 9px;
+        flex: 0 1 auto;
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      .safety-icon {
+        width: 17px;
+        height: 17px;
+        display: grid;
+        place-items: center;
+        flex: 0 0 auto;
+        margin-top: 1px;
+        border: 1px solid var(--line-strong);
+        border-radius: 50%;
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 800;
+      }
+
+      .decision-row {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+        margin-top: 22px;
+      }
+      .decision-aside { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; flex: 0 1 42%; }
+      .rollback-note { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+      .repair-plan { margin-top: 20px; padding: 16px 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-soft); }
+      .repair-plan summary { cursor: pointer; font-size: 14px; font-weight: 600; }
+      .repair-plan ul { margin: 14px 0 0; padding-left: 20px; color: var(--muted); font-size: 13px; line-height: 1.8; }
+      #secondary:disabled { cursor: not-allowed; }
+      .decision-main {
+        display: flex;
+        flex: 1 1 0;
+        margin-left: auto;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 12px;
+        min-width: 0;
+      }
+      .decision-row.safe-mode-only { justify-content: flex-end; }
+      .decision-row.safe-mode-only .decision-aside { display: none; }
+      .actions {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        flex: 0 0 auto;
+        gap: 9px;
+        margin: 0;
+      }
+      .button {
+        min-height: 39px;
+        padding: 9px 15px;
+        border: 1px solid var(--line-strong);
+        border-radius: 10px;
+        color: var(--ink);
+        background: var(--surface);
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 620;
+        transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+      }
+      .button:hover { background: var(--surface-soft); }
+      .button:active { transform: translateY(1px); }
+      .button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+      .button.primary {
+        border-color: var(--button);
+        color: var(--primary-ink);
+        background: var(--button);
+      }
+      .button.primary:hover { border-color: var(--button-hover); background: var(--button-hover); }
+      .button[disabled] { opacity: 0.64; cursor: wait; transform: none; }
+
+      [hidden] { display: none !important; }
+
+      .plugin-upgrade-btn {
+        margin-left: auto;
+        padding: 4px 10px;
+        border: 1px solid rgba(22, 163, 74, 0.28);
+        border-radius: 8px;
+        color: #15803d;
+        background: rgba(22, 163, 74, 0.08);
+        cursor: pointer;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-size: 12px;
+        font-weight: 550;
+        line-height: 1.4;
+        white-space: nowrap;
+        transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+      }
+      .plugin-upgrade-btn:hover {
+        background: rgba(22, 163, 74, 0.16);
+        border-color: rgba(22, 163, 74, 0.4);
+      }
+      .plugin-upgrade-btn:active {
+        transform: translateY(1px);
+      }
+      .plugin-upgrade-btn:disabled {
+        opacity: 0.6;
+        cursor: wait;
+        transform: none;
+      }
+      :root[data-theme="dark"] .plugin-upgrade-btn {
+        color: #4ade80;
+        background: rgba(74, 222, 128, 0.12);
+        border-color: rgba(74, 222, 128, 0.25);
+      }
+      :root[data-theme="dark"] .plugin-upgrade-btn:hover {
+        background: rgba(74, 222, 128, 0.2);
+        border-color: rgba(74, 222, 128, 0.45);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme="light"]) .plugin-upgrade-btn {
+          color: #4ade80;
+          background: rgba(74, 222, 128, 0.12);
+          border-color: rgba(74, 222, 128, 0.25);
+        }
+        :root:not([data-theme="light"]) .plugin-upgrade-btn:hover {
+          background: rgba(74, 222, 128, 0.2);
+          border-color: rgba(74, 222, 128, 0.45);
+        }
+      }
+      /* Removal is the neutral choice on a plugin row: it takes the same
+         colors as the secondary buttons below, in light and dark alike. */
+      .plugin-upgrade-btn.plugin-remove-btn,
+      :root[data-theme="dark"] .plugin-upgrade-btn.plugin-remove-btn,
+      :root:not([data-theme="light"]) .plugin-upgrade-btn.plugin-remove-btn {
+        color: var(--ink);
+        border-color: var(--line-strong);
+        background: var(--surface);
+      }
+      .plugin-upgrade-btn.plugin-remove-btn:hover,
+      :root[data-theme="dark"] .plugin-upgrade-btn.plugin-remove-btn:hover,
+      :root:not([data-theme="light"]) .plugin-upgrade-btn.plugin-remove-btn:hover {
+        border-color: var(--line-strong);
+        background: var(--surface-soft);
+      }
+
+      .heading-row {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      .body-row { display: flex; flex: 1 1 auto; min-height: 0; }
+      .heading-row { display: block; }
+      .heading-row h1 { display: inline; }
+      .error-info { display: inline-block; vertical-align: baseline; margin-left: 7px; }
+      .error-info-button {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 19px; height: 19px; padding: 0; border: 1px solid var(--muted);
+        border-radius: 50%; background: transparent; color: var(--muted);
+        font: 600 12px Georgia, serif; cursor: pointer; vertical-align: 2px;
+      }
+      .error-info-button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+      .error-popover {
+        position: fixed; z-index: 20; width: min(440px, calc(100vw - 32px));
+        max-height: min(430px, calc(100vh - 32px)); overflow: auto;
+        box-sizing: border-box; padding: 16px; border: 1px solid var(--line);
+        border-radius: 12px; background: var(--surface); color: var(--ink);
+        box-shadow: 0 8px 30px rgba(0, 0, 0, .14);
+      }
+      .error-popover-title { margin: 0 0 10px; font-size: 14px; font-weight: 600; }
+      .details-card {
+        margin: 12px 0;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--surface-soft);
+        padding: 17px 19px 6px;
+      }
+      .meta-label {
+        margin: 0 0 6px;
+        color: var(--faint);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .path, .technical {
+        margin: 0 0 14px;
+        color: var(--muted);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 11px;
+        line-height: 1.55;
+        overflow-wrap: anywhere;
+        white-space: pre-wrap;
+      }
+      .advanced-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+      .advanced-actions .plugin-upgrade-btn { margin-left: 0; }
+      .text-button {
+        min-height: 32px;
+        padding: 5px 9px;
+        border: 0;
+        border-radius: 7px;
+        color: var(--muted);
+        background: transparent;
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .text-button:hover { color: var(--ink); background: var(--surface-soft); }
+      .text-button.danger:hover { color: var(--danger); background: rgba(195, 59, 56, 0.08); }
+      .footer {
+        display: flex;
+        flex-shrink: 0;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        padding: 11px max(26px, calc((100% - var(--page-max)) / 2));
+        color: var(--faint);
+        background: var(--surface);
+        font-size: 11px;
+      }
+      .community { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+      .community-links { display: flex; align-items: center; gap: 6px; }
+      .community a, .community button { display: inline-flex; align-items: center; gap: 5px; min-height: 30px; padding: 4px 9px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); text-decoration: none; white-space: nowrap; background: transparent; cursor: pointer; font: inherit; }
+      .community a:hover, .community button:hover { color: var(--ink); border-color: var(--muted); }
+      .community a:focus-visible, .community button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+      .community svg { width: 15px; height: 15px; flex-shrink: 0; }
+      .community .brand-icon { width: 14px; height: 14px; }
+      .community button { border-color: transparent; }
+      .community button:hover { background: var(--soft, var(--surface-soft)); border-color: var(--line); }
+      .community a { padding-inline: 4px; border-color: transparent; border-radius: 4px; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--line); }
+      .community a:hover { border-color: transparent; text-decoration-color: currentColor; }
+      .community .external-icon { width: 12px; height: 12px; }
+      .wechat-popover { position: fixed; inset: auto; margin: 0; width: 226px; padding: 12px; border: 1px solid var(--line); border-radius: 14px; color: var(--ink); background: var(--surface); box-shadow: 0 8px 28px rgba(0,0,0,.16); font-size: 12px; text-align: center; }
+      .wechat-popover img { display: block; width: 200px; height: 200px; background: #fff; border-radius: 6px; }
+      .wechat-popover p { margin: 10px 0 0; line-height: 1.5; }
+      .header > #quit { margin-left: auto; flex-shrink: 0; }
+      @media (max-width: 620px) {
+        .header { padding-inline: 20px; }
+        .content { padding: 24px 20px 16px; }
+        .heading-row { flex-direction: column; align-items: flex-start; gap: 6px; }
+        .body-row { flex-direction: column; }
+        .decision-row { flex-direction: column; align-items: stretch; }
+        .decision-aside, .decision-main { align-items: stretch; }
+        .actions { align-items: stretch; flex-direction: column-reverse; }
+        .button { width: 100%; }
+        .footer { padding-inline: 20px; }
+      }
+
+      :root[data-theme="dark"] {
+        --canvas: #141416;
+        --surface: #202023;
+        --surface-soft: #29292d;
+        --ink: #f2f2f4;
+        --muted: #a5a7ad;
+        --faint: #7f8289;
+        --line: #3a3a3f;
+        --line-strong: #4a4a50;
+        --button: #f4f4f5;
+        --button-hover: #ffffff;
+        --primary-ink: #111217;
+        --danger: #ee7772;
+        --shadow: 0 18px 48px rgba(0, 0, 0, 0.3);
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme="light"]) {
+          --canvas: #141416;
+          --surface: #202023;
+          --surface-soft: #29292d;
+          --ink: #f2f2f4;
+          --muted: #a5a7ad;
+          --faint: #7f8289;
+          --line: #3a3a3f;
+          --line-strong: #4a4a50;
+          --button: #f4f4f5;
+          --button-hover: #ffffff;
+          --primary-ink: #111217;
+          --danger: #ee7772;
+          --shadow: 0 18px 48px rgba(0, 0, 0, 0.3);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .button { transition: none; }
+        .header { transition: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell" aria-labelledby="heading">
+      <header class="header">
+        <div class="brand">
+          <img id="icon" alt="" />
+          <span class="brand-name" id="brand"></span>
+        </div>
+        <button class="text-button" id="quit" type="button"></button>
+      </header>
+
+      <div class="body-row" id="body-row">
+      <section class="content">
+       <div class="column">
+        <p class="notice" id="notice" role="alert"></p>
+        <div class="heading-row">
+          <h1 id="heading"></h1>
+        <div class="error-info" id="error-info">
+            <button class="error-info-button" id="error-info-button" type="button" aria-controls="error-details" aria-expanded="false">i</button>
+            <section class="error-popover" id="error-details" role="region" aria-labelledby="advanced-label" hidden>
+          <p class="error-popover-title" id="advanced-label"></p>
+          <div class="details-card">
+            <p class="meta-label" id="launch-directory-label"></p>
+            <p class="path" id="launch-directory"></p>
+            <p class="meta-label" id="error-label"></p>
+            <pre class="technical" id="technical"></pre>
+          </div>
+          <div class="advanced-actions">
+            <button class="plugin-upgrade-btn plugin-remove-btn" id="show-log" type="button"></button>
+          </div>
+        </section>
+          </div>
+        </div>
+        <p class="summary" id="summary"></p>
+        <details class="repair-plan" id="repair-plan" hidden>
+          <summary id="repair-plan-label"></summary>
+          <ul id="repair-plan-steps"></ul>
+        </details>
+
+
+        <section class="conflict-card" id="conflict-card" aria-label="Plugin recovery details">
+          <ul class="plugins" id="plugins"></ul>
+        </section>
+
+        <div class="decision-row" id="decision-row">
+          <div class="decision-aside">
+            <button class="button" id="secondary" type="button" hidden></button>
+            <p class="rollback-note" id="rollback-note" hidden></p>
+            <button class="button" id="safe-mode" type="button"></button>
+          </div>
+          <div class="decision-main">
+            <div class="actions">
+              <button class="button" id="repair-agent" type="button" hidden></button>
+              <button class="button primary" id="primary" type="button"></button>
+            </div>
+            <p class="rollback-note" id="agent-environment-note" hidden></p>
+            <p class="safety">
+              <span class="safety-icon" aria-hidden="true">✓</span>
+              <span id="safety-note"></span>
+            </p>
+          </div>
+        </div>
+
+       </div>
+      </section>
+      </div>
+
+      <footer class="footer">
+        <aside class="community" aria-labelledby="community-label">
+          <span id="community-label"></span>
+          <span class="community-links">
+            <button id="community-wechat" type="button" aria-expanded="false" aria-controls="wechat-popover">
+              <svg class="brand-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M8.691 2.188C3.891 2.188 0 5.476 0 9.53c0 2.212 1.17 4.203 3.002 5.55a.59.59 0 0 1 .213.665l-.39 1.48c-.019.07-.048.141-.048.213 0 .163.13.295.29.295a.326.326 0 0 0 .167-.054l1.903-1.114a.864.864 0 0 1 .717-.098 10.16 10.16 0 0 0 2.837.403c.276 0 .543-.027.811-.05-.857-2.578.157-4.972 1.932-6.446 1.703-1.415 3.882-1.98 5.853-1.838-.576-3.583-4.196-6.348-8.596-6.348zM5.785 5.991c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 0 1-1.162 1.178A1.17 1.17 0 0 1 4.623 7.17c0-.651.52-1.18 1.162-1.18zm5.813 0c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 0 1-1.162 1.178 1.17 1.17 0 0 1-1.162-1.178c0-.651.52-1.18 1.162-1.18zm5.34 2.867c-1.797-.052-3.746.512-5.28 1.786-1.72 1.428-2.687 3.72-1.78 6.22.942 2.453 3.666 4.229 6.884 4.229.826 0 1.622-.12 2.361-.336a.722.722 0 0 1 .598.082l1.584.926a.272.272 0 0 0 .14.047c.134 0 .24-.111.24-.247 0-.06-.023-.12-.038-.177l-.327-1.233a.582.582 0 0 1-.023-.156.49.49 0 0 1 .201-.398C23.024 18.48 24 16.82 24 14.98c0-3.21-2.931-5.837-6.656-6.088V8.89c-.135-.01-.27-.027-.407-.03zm-2.53 3.274c.535 0 .969.44.969.982a.976.976 0 0 1-.969.983.976.976 0 0 1-.969-.983c0-.542.434-.982.97-.982zm4.844 0c.535 0 .969.44.969.982a.976.976 0 0 1-.969.983.976.976 0 0 1-.969-.983c0-.542.434-.982.969-.982z" />
+              </svg>
+              <span id="community-wechat-label"></span>
+            </button>
+            <a id="community-discord" href="https://discord.gg/7Xgf3qe3Qp" target="_blank" rel="noopener noreferrer">
+              <svg class="brand-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M20.317 4.3698a19.7913 19.7913 0 00-4.8851-1.5152.0741.0741 0 00-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 00-.0785-.037 19.7363 19.7363 0 00-4.8852 1.515.0699.0699 0 00-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 00.0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 00.0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 00-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 01-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 01.0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 01.0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 01-.0066.1276 12.2986 12.2986 0 01-1.873.8914.0766.0766 0 00-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 00.0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 00.0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 00-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1568 2.4189Z" />
+              </svg>
+              <span>Discord</span>
+              <svg class="external-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M4 12 12 4M5 4h7v7" />
+              </svg>
+            </a>
+          </span>
+        </aside>
+      </footer>
+    </main>
+    <div id="wechat-popover" class="wechat-popover" popover="auto" role="region" aria-labelledby="wechat-caption">
+      <img id="wechat-qr" src="community-wechat-qr.png" width="200" height="200" alt="" />
+      <p id="wechat-caption"></p>
+    </div>
+
+    <script>
+      const params = new URLSearchParams(location.search)
+      const model = JSON.parse(params.get('state') || '{}')
+      document.documentElement.lang = model.locale === 'zh' ? 'zh-CN' : 'en'
+      document.documentElement.dataset.theme = params.get('theme') || 'system'
+      document.title = model.badge || 'DSH Desktop'
+
+      const setText = (id, value) => {
+        const node = document.getElementById(id)
+        if (node) node.textContent = value || ''
+      }
+
+      document.getElementById('icon').src = params.get('icon') || 'icon.png'
+      setText('brand', model.brand)
+      setText('heading', model.heading)
+      setText('summary', model.summary)
+      setText('safety-note', model.safetyNote)
+      setText('advanced-label', model.advancedLabel)
+      setText('launch-directory-label', model.launchDirectoryLabel)
+      setText('launch-directory', model.launchDirectory || '—')
+      setText('error-label', model.errorLabel)
+      setText('technical', model.rawError)
+      setText('show-log', model.logLabel)
+      setText('quit', model.quitLabel)
+      setText('community-label', model.locale === 'zh' ? '遇到问题？来社区交流' : 'Need help? Join our community')
+      setText('community-wechat-label', model.locale === 'zh' ? '微信群' : 'WeChat')
+      setText('wechat-caption', model.locale === 'zh' ? '扫码加入 DSH 用户群' : 'Scan to join the DSH community')
+      const wechat = document.getElementById('community-wechat')
+      const wechatPopover = document.getElementById('wechat-popover')
+      document.getElementById('wechat-qr').alt = model.locale === 'zh' ? 'DSH 用户群二维码' : 'DSH community WeChat QR code'
+      let wechatCloseTimer
+      const positionWechat = () => {
+        const anchor = wechat.getBoundingClientRect()
+        const popup = wechatPopover.getBoundingClientRect()
+        const centered = anchor.left + anchor.width / 2 - popup.width / 2
+        const left = Math.max(12, Math.min(centered, innerWidth - popup.width - 12))
+        const top = Math.max(12, Math.min(anchor.top - popup.height - 8, innerHeight - popup.height - 12))
+        wechatPopover.style.left = `${left}px`
+        wechatPopover.style.top = `${top}px`
+      }
+      const openWechat = () => {
+        clearTimeout(wechatCloseTimer)
+        if (!wechatPopover.matches(':popover-open')) wechatPopover.showPopover()
+        positionWechat()
+      }
+      const closeWechat = () => {
+        clearTimeout(wechatCloseTimer)
+        if (wechatPopover.matches(':popover-open')) wechatPopover.hidePopover()
+      }
+      const scheduleWechatClose = () => {
+        clearTimeout(wechatCloseTimer)
+        wechatCloseTimer = setTimeout(() => {
+          if (!wechat.matches(':hover') && !wechatPopover.matches(':hover') && document.activeElement !== wechat) closeWechat()
+        }, 150)
+      }
+      wechat.addEventListener('pointerenter', openWechat)
+      wechat.addEventListener('pointerleave', scheduleWechatClose)
+      wechat.addEventListener('focus', openWechat)
+      wechat.addEventListener('blur', scheduleWechatClose)
+      wechat.addEventListener('click', openWechat)
+      wechatPopover.addEventListener('pointerenter', () => clearTimeout(wechatCloseTimer))
+      wechatPopover.addEventListener('pointerleave', scheduleWechatClose)
+      wechatPopover.addEventListener('toggle', () => wechat.setAttribute('aria-expanded', String(wechatPopover.matches(':popover-open'))))
+      window.addEventListener('resize', closeWechat)
+      document.addEventListener('scroll', closeWechat, true)
+      document.getElementById('community-discord').title = model.locale === 'zh'
+        ? '在浏览器中打开 Discord 社区'
+        : 'Open our Discord community in your browser'
+      // No plugin to repair: the primary action itself enters Safe Mode, so the
+      // row collapses to that button and its note, centered together.
+      const safeModeOnly = model.safeModeOnly ?? (!model.canUninstall && !model.upgradeCandidate && !model.marketPrimary)
+      document.getElementById('decision-row').classList.toggle('safe-mode-only', safeModeOnly)
+      const safeModeBtn = document.getElementById('safe-mode')
+      if (safeModeBtn) {
+        // The primary action already enters Safe Mode when no repair is available.
+        safeModeBtn.hidden = true
+        safeModeBtn.textContent = model.safeModeLabel || (model.locale === 'zh' ? '进入安全模式' : 'Enter Safe Mode')
+        safeModeBtn.addEventListener('click', () => {
+          safeModeBtn.disabled = true
+          primary.disabled = true
+          if (secondary) secondary.disabled = true
+          document.querySelectorAll('.plugin-upgrade-btn').forEach((btn) => { btn.disabled = true })
+          safeModeBtn.textContent = model.locale === 'zh' ? '正在进入安全模式…' : 'Entering Safe Mode…'
+          void window.dshRecovery.action('agent', { prompt: repairAgentPrompt })
+        })
+      }
+
+      const notice = document.getElementById('notice')
+      if (model.notice) {
+        notice.textContent = model.notice
+        notice.classList.add('visible')
+      }
+
+      // Keep the human-readable plan separate from diagnostic logs.
+      document.getElementById('conflict-card').hidden = true
+      const repairPlan = document.getElementById('repair-plan')
+      repairPlan.hidden = !model.canRepair
+      setText('repair-plan-label', model.repairDetailsLabel)
+      for (const step of model.repairDetails || []) {
+        const item = document.createElement('li')
+        item.textContent = step
+        document.getElementById('repair-plan-steps').appendChild(item)
+      }
+      const agentEnvironmentNote = document.getElementById('agent-environment-note')
+      agentEnvironmentNote.hidden = !model.offerRepairAgent
+      agentEnvironmentNote.textContent = model.locale === 'zh'
+        ? 'Agent 将在安全模式下排查，第三方插件暂不加载。'
+        : 'The Agent runs in Safe Mode with third-party plugins temporarily disabled.'
+      const rollbackNote = document.getElementById('rollback-note')
+      rollbackNote.hidden = !model.rollbackUnavailableReason
+      rollbackNote.textContent = model.rollbackUnavailableReason || ''
+      const navigate = (action) => {
+        if (window.dshRecovery && typeof window.dshRecovery.action === 'function') {
+          void window.dshRecovery.action(action)
+        } else {
+          const target = /^(upgrade|uninstall):(.+)$/.exec(action)
+          location.href = target
+            ? `dsh-recovery://${target[1]}?plugin=${encodeURIComponent(target[2])}`
+            : `dsh-recovery://${action}`
+        }
+      }
+      const primary = document.getElementById('primary')
+      const secondary = document.getElementById('secondary')
+
+      setText('primary', model.primaryLabel)
+      if (model.rollbackVisible || model.rollbackLabel) {
+        secondary.hidden = false
+        secondary.disabled = !model.rollbackLabel
+        secondary.textContent = model.rollbackLabel || (model.locale === 'zh' ? '回退应用版本' : 'Roll back app version')
+        secondary.setAttribute('aria-describedby', 'rollback-note')
+        secondary.addEventListener('click', () => {
+          if (secondary.disabled) return
+          document.querySelectorAll('button').forEach(control => { control.disabled = true })
+          navigate('rollback')
+        })
+      }
+      primary.addEventListener('click', () => {
+        document.querySelectorAll('button').forEach(control => { control.disabled = true })
+        primary.textContent = model.primaryBusyLabel
+        if (model.canRepair) navigate('auto-process')
+        else void window.dshRecovery.action('agent', { prompt: repairAgentPrompt })
+      })
+      document.getElementById('show-log').addEventListener('click', () => navigate('show-log'))
+      document.getElementById('quit').addEventListener('click', () => navigate('quit'))
+    </script>
+    <script>
+      const errorAnchor = document.getElementById('error-info-button')
+      const errorPopup = document.getElementById('error-details')
+      const errorInfo = document.getElementById('error-info')
+      errorAnchor.setAttribute('aria-label', model.advancedLabel || 'Error details')
+      let errorCloseTimer
+      const closeError = () => {
+        clearTimeout(errorCloseTimer)
+        errorPopup.hidden = true
+        errorAnchor.setAttribute('aria-expanded', 'false')
+      }
+      const openError = () => {
+        clearTimeout(errorCloseTimer)
+        errorPopup.hidden = false
+        errorAnchor.setAttribute('aria-expanded', 'true')
+        const anchor = errorAnchor.getBoundingClientRect()
+        const popup = errorPopup.getBoundingClientRect()
+        errorPopup.style.left = `${Math.max(16, Math.min(anchor.left, window.innerWidth - popup.width - 16))}px`
+        errorPopup.style.top = `${Math.max(16, Math.min(anchor.bottom + 8, window.innerHeight - popup.height - 16))}px`
+      }
+      const deferErrorClose = () => {
+        clearTimeout(errorCloseTimer)
+        errorCloseTimer = setTimeout(closeError, 180)
+      }
+      errorInfo.addEventListener('mouseenter', openError)
+      errorInfo.addEventListener('mouseleave', deferErrorClose)
+      errorInfo.addEventListener('focusin', openError)
+      errorInfo.addEventListener('focusout', event => {
+        if (!errorInfo.contains(event.relatedTarget)) deferErrorClose()
+      })
+      errorAnchor.addEventListener('click', openError)
+      document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && !errorPopup.hidden) {
+          errorAnchor.focus()
+          closeError()
+        }
+      })
+      document.addEventListener('pointerdown', event => {
+        if (!errorInfo.contains(event.target)) closeError()
+      })
+      window.addEventListener('resize', closeError)
+    </script>
+    <script>
+      // Only the request is sent: the main process prepends the offline
+      // diagnosis and the failed launch's logs to the first turn.
+      const repairAgentPrompt = model.locale === 'zh'
+        ? '请结合诊断事实和 harness.log，定位导致启动失败的确切根因。先说明结论和建议的最小可逆操作，在我明确确认之前不要修改任何文件或配置。'
+        : 'Using the diagnostic facts and harness.log, find the exact root cause of the startup failure. Explain the conclusion and the smallest reversible fix first, and do not change any file or setting until I explicitly confirm.'
+      // Known repairs never offer the Agent shortcut. Exhausted or unknown
+      // failures use the primary Agent action; page load never dispatches it.
+      const repairAgent = document.getElementById('repair-agent')
+      repairAgent.hidden = !model.offerRepairAgent
+      repairAgent.textContent = model.safeModeLabel || (model.locale === 'zh' ? '让 Agent 帮我修' : 'Ask Agent to help')
+      repairAgent.addEventListener('click', () => {
+        document.querySelectorAll('button').forEach((control) => { control.disabled = true })
+        void window.dshRecovery.action('agent', { prompt: repairAgentPrompt })
+      })
+    </script>
+  </body>
+</html>

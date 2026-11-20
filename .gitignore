@@ -1,0 +1,47 @@
+node_modules/
+out/
+out-shell/
+dist/
+dist-dev/
+dist-shell/
+.DS_Store
+*.log
+coverage/
+/doc/
+/deliverables/
+build/icon.iconset/
+build/app-icon.iconset/
+build/icon-1024.png
+.env
+.env.*
+!.env.example
+.coaligne/
+.coaligneignore
+
+
+# Python bytecode from release-note scripts / tests
+__pycache__/
+*.pyc
+
+# Local test artifacts, diagnostics and smoke-test output
+/artifacts/
+
+# Local-only design docs
+docs/plugin-management.zh.md
+docs/default-capabilities.zh.md
+docs/mobile-connection-latency.zh.md
+
+# Local pnpm content store
+/.pnpm-store/
+/.build/
+/packages/ppt-runtime/templates/
+/packages/ppt-bundles/
+
+# Local Finder visual-test disk images
+/dist-dmg-preview/
+
+# Local design iterations; production artwork lives in build/dmg/.
+/docs/dmg-install-preview/
+
+# Snapshots fetched by scripts/upstream-diff.mjs. Not source.
+/.upstream-cache/

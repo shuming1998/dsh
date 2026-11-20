@@ -1,0 +1,135 @@
+import { describe, expect, it } from 'vitest'
+import type { UpdateStatus } from '../src/shared/contracts'
+import {
+  isUpdateDismissed,
+  rollbackReleases,
+  rollbackEmptyMessage,
+  isNewManualPresentation,
+  shouldShowUpdate,
+  updateHeadline,
+  updateMessage
+} from '../src/preload/update-view'
+
+const downloading: UpdateStatus = {
+  phase: 'downloading',
+  currentVersion: '1.0.0',
+  availableVersion: '1.1.0',
+  percent: 42.2,
+  manual: false
+}
+
+const downloaded: UpdateStatus = {
+  phase: 'downloaded',
+  currentVersion: '1.0.0',
+  availableVersion: '1.1.0',
+  manual: false
+}
+
+describe('desktop update card visibility', () => {
+  it('shows automatic downloads but keeps automatic background checks quiet', () => {
+    expect(shouldShowUpdate(downloading)).toBe(true)
+    expect(
+      shouldShowUpdate({ phase: 'checking', currentVersion: '1.0.0', manual: false })
+    ).toBe(false)
+    expect(
+      shouldShowUpdate({ phase: 'checking', currentVersion: '1.0.0', manual: true })
+    ).toBe(true)
+  })
+
+  it('keeps a dismissed version hidden while its download phase changes', () => {
+    expect(isUpdateDismissed(downloading, '1.1.0')).toBe(true)
+    expect(isUpdateDismissed({ ...downloading, availableVersion: '1.2.0' }, '1.1.0')).toBe(
+      false
+    )
+  })
+
+  it('dismisses a downloaded update when the user closes the card', () => {
+    expect(isUpdateDismissed(downloaded, null)).toBe(false)
+    expect(isUpdateDismissed(downloaded, '1.0.0')).toBe(false)
+    expect(isUpdateDismissed(downloaded, '1.1.0')).toBe(true)
+  })
+
+  it('formats localized progress copy', () => {
+    expect(updateMessage(downloading, 'zh')).toBe('正在下载更新 42%')
+    expect(updateMessage(downloading, 'en')).toBe('Downloading update 42%')
+  })
+})
+
+describe('downgrade copy', () => {
+  it('names the downgrade in both locales', () => {
+    const status: UpdateStatus = {
+      phase: 'downloading',
+      currentVersion: '1.5.0',
+      availableVersion: '1.2.0',
+      manual: true,
+      downgrade: true,
+      percent: 30
+    }
+    expect(updateHeadline(status, 'zh').title).toContain('降级')
+    expect(updateMessage(status, 'zh')).toContain('1.2.0')
+    expect(updateHeadline(status, 'en').title.toLowerCase()).toContain('downgrad')
+    expect(updateMessage(status, 'en')).toContain('1.2.0')
+  })
+})
+
+describe('accepting an update is what starts the download', () => {
+  it('asks rather than announcing a download already under way', () => {
+    const available: UpdateStatus = {
+      phase: 'available',
+      currentVersion: '0.4.3',
+      availableVersion: '0.4.4',
+      manual: false
+    }
+    expect(updateMessage(available, 'zh')).toBe('发现新版本 0.4.4，是否更新？')
+    expect(updateMessage(available, 'en')).toBe('DSH Desktop 0.4.4 is available. Update now?')
+  })
+})
+
+
+
+describe('manual update presentation lifecycle', () => {
+  it('reopens a cached release only for a new manual request', () => {
+    const previous: UpdateStatus = { ...downloading, manual: true, presentationId: 1 }
+    expect(isNewManualPresentation({ ...previous, percent: 80 }, previous)).toBe(false)
+    expect(isNewManualPresentation({ ...previous, phase: 'downloaded' }, previous)).toBe(false)
+    expect(isNewManualPresentation({ ...previous, presentationId: 2 }, previous)).toBe(true)
+    expect(isNewManualPresentation({ ...previous, manual: false, source: 'runtime', presentationId: 2 }, previous)).toBe(false)
+  })
+
+  it('opens the first live manual result and supports older producers without IDs', () => {
+    expect(isNewManualPresentation({ ...downloaded, manual: true })).toBe(true)
+    expect(isNewManualPresentation({ ...downloaded, manual: true, phase: 'checking' }, downloaded)).toBe(true)
+    expect(isNewManualPresentation({ ...downloading, manual: true }, { ...downloading, manual: true })).toBe(false)
+  })
+
+  it('distinguishes bootstrap snapshots from live manual requests without changing their request identity', () => {
+    const historical: UpdateStatus = { ...downloaded, phase: 'up-to-date', manual: true, presentationId: 7 }
+    expect(isNewManualPresentation(historical, undefined, 'snapshot')).toBe(false)
+    expect(isNewManualPresentation(historical, historical)).toBe(false)
+    expect(shouldShowUpdate(historical, false)).toBe(false)
+    expect(shouldShowUpdate({ ...historical, phase: 'available' }, false)).toBe(true)
+    expect(isNewManualPresentation({ ...historical, presentationId: 8 }, historical)).toBe(true)
+  })
+
+  it('names the available version in the notification title in both languages', () => {
+    const status: UpdateStatus = { ...downloaded, phase: 'available' }
+    expect(updateHeadline(status, 'zh').title).toBe('检测到新版本 v1.1.0')
+    expect(updateHeadline(status, 'en').title).toBe('New version v1.1.0 available')
+  })
+})
+
+describe('About rollback choices', () => {
+  const releases = ['0.13.0', '0.12.0', '0.11.0', '0.12.0-rc.10', '0.12.0-rc.9'].map(version => ({ version, tag: `v${version}`, archiveUrl: `https://example.invalid/${version}/` }))
+
+  it('filters out the current and future versions from a mixed catalogue', () => {
+    expect(rollbackReleases(releases, '0.12.0').map(release => release.version)).toEqual(['0.12.0-rc.10', '0.12.0-rc.9', '0.11.0'])
+    expect(releases[0]?.version).toBe('0.13.0')
+  })
+
+  it('returns an empty state when no historical versions exist', () => {
+    expect(rollbackReleases(releases, '0.11.0')).toEqual([])
+    expect(rollbackReleases([], '0.12.0')).toEqual([])
+    expect(rollbackEmptyMessage('zh')).toBe('暂无可回退的历史版本')
+    expect(rollbackEmptyMessage('en')).toBe('No older versions available to roll back to')
+  })
+})
